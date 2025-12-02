@@ -837,15 +837,16 @@ def get_categories_basic(request):
 
             # Get category image - check if category_image field exists
             if hasattr(category, 'category_image') and category.category_image:
-                category_data['category_image'] = category.category_image.url
+                # Use absolute URL
+                category_data['category_image'] = get_absolute_media_url(request, category.category_image.url)
 
             # Fallback to first image in category
             elif category.styled_images.exists():
                 first_image = category.styled_images.first()
                 if first_image and first_image.output_image:
-                    category_data['category_image'] = first_image.output_image.url
+                    category_data['category_image'] = get_absolute_media_url(request, first_image.output_image.url)
                 elif first_image and first_image.original_image:
-                    category_data['category_image'] = first_image.original_image.url
+                    category_data['category_image'] = get_absolute_media_url(request, first_image.original_image.url)
 
             categories_data.append(category_data)
 
@@ -857,6 +858,7 @@ def get_categories_basic(request):
 
     except Exception as e:
         return JsonResponse({'error': f'Server error: {str(e)}'}, status=500)
+
 def get_category_images(request, category_id):
     """
     API endpoint to get a specific category with its images
@@ -899,8 +901,8 @@ def get_category_images(request, category_id):
                 'font_family': image.font_family,
                 'x_position': image.x_position,
                 'y_position': image.y_position,
-                'original_image_url': image.original_image.url if image.original_image else None,
-                'output_image_url': image.output_image.url if image.output_image else None,
+                'original_image_url': get_absolute_media_url(request, image.original_image.url) if image.original_image else None,
+                'output_image_url': get_absolute_media_url(request, image.output_image.url) if image.output_image else None,
                 'created_at': image.created_at.isoformat(),
             })
 
@@ -924,8 +926,8 @@ def get_category_images(request, category_id):
                     'font_family': image.font_family,
                     'x_position': image.x_position,
                     'y_position': image.y_position,
-                    'original_image_url': image.original_image.url if image.original_image else None,
-                    'output_image_url': image.output_image.url if image.output_image else None,
+                    'original_image_url': get_absolute_media_url(request, image.original_image.url) if image.original_image else None,
+                    'output_image_url': get_absolute_media_url(request, image.output_image.url) if image.output_image else None,
                     'created_at': image.created_at.isoformat(),
                 })
 
@@ -940,8 +942,6 @@ def get_category_images(request, category_id):
         return JsonResponse({'error': 'Category not found'}, status=404)
     except Exception as e:
         return JsonResponse({'error': f'Server error: {str(e)}'}, status=500)
-
-
 def get_subcategory_images(request, subcategory_id):
     """
     API endpoint to get a specific subcategory with its images
@@ -992,6 +992,18 @@ def get_subcategory_images(request, subcategory_id):
     except Exception as e:
         return JsonResponse({'error': f'Server error: {str(e)}'}, status=500)
 
+
+def get_absolute_media_url(request, relative_url):
+    """Convert relative media URL to absolute URL"""
+    if not relative_url:
+        return None
+
+    # Get the absolute URL using the request
+    if request:
+        return request.build_absolute_uri(relative_url)
+    else:
+        # Fallback for when there's no request (shouldn't happen in views)
+        return f"https://yousefelmesalamy.pythonanywhere.com{relative_url}"
 
 def get_uncategorized_images(request):
     """
