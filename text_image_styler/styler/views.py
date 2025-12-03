@@ -955,3 +955,195 @@ def get_uncategorized_images(request):
 
     except Exception as e:
         return JsonResponse({'error': f'Server error: {str(e)}'}, status=500)
+
+
+def get_trending_images(request):
+    """
+    NEW ENDPOINT: Get trending images (recently updated with high activity)
+    Returns: JSON with images that have been recently updated
+    """
+    try:
+        # Get query parameters
+        limit = request.GET.get('limit', 10)
+
+        try:
+            limit = int(limit)
+            if limit > 50:
+                limit = 50
+        except ValueError:
+            limit = 10
+
+        from datetime import datetime, timedelta
+        from django.utils import timezone
+
+        # Get images updated in the last 7 days
+        week_ago = timezone.now() - timedelta(days=7)
+
+        trending_images = StyledImage.objects.select_related('category').filter(
+            last_updated__gte=week_ago,
+            update_clicks__gt=0
+        ).order_by('-update_clicks', '-last_updated')[:limit]
+
+        images_data = []
+        for image in trending_images:
+            # Calculate activity score (clicks per day since creation)
+            days_since_creation = (timezone.now() - image.created_at).days
+            if days_since_creation == 0:
+                days_since_creation = 1
+            activity_score = image.update_clicks / days_since_creation
+
+            images_data.append({
+                'id': image.id,
+                'text': image.text,
+                'text_preview': image.text[:50] + '...' if len(image.text) > 50 else image.text,
+                'update_clicks': image.update_clicks,
+                'activity_score': round(activity_score, 2),
+                'last_updated': image.last_updated.isoformat(),
+                'created_at': image.created_at.isoformat(),
+                'days_since_creation': days_since_creation,
+                'category': {
+                    'id': image.category.id if image.category else None,
+                    'name': image.category.name if image.category else 'Uncategorized',
+                } if image.category else None,
+                'output_image_url': get_absolute_media_url(request,
+                                                           image.output_image.url) if image.output_image else None,
+                'trending_badge': get_trending_badge(activity_score),
+            })
+
+        return JsonResponse({
+            'success': True,
+            'timeframe': 'last_7_days',
+            'limit': limit,
+            'trending_images': images_data
+        })
+
+    except Exception as e:
+        return JsonResponse({'error': f'Server error: {str(e)}'}, status=500)
+
+
+def get_trending_badge(activity_score):
+    """Determine trending badge based on activity score"""
+    if activity_score >= 2:
+        return '🔥 Hot'
+    elif activity_score >= 1:
+        return '↑ Trending'
+    elif activity_score >= 0.5:
+        return '↗️ Rising'
+    else:
+        return '↗️ Active'
+
+
+def get_most_updated_images(request):
+    """
+    NEW ENDPOINT: Get images with the highest update clicks
+    Returns: JSON with images sorted by update_clicks (most updated first)
+    """
+    try:
+        # Get query parameters
+        limit = request.GET.get('limit', 10)  # Default 10 images
+        category_id = request.GET.get('category_id')
+        timeframe = request.GET.get('timeframe')  # daily, weekly, monthly, yearly
+
+        try:
+            limit = int(limit)
+            if limit > 50:  # Prevent too large requests
+                limit = 50
+        except ValueError:
+            limit = 10
+
+        # Base queryset
+        queryset = StyledImage.objects.select_related('category').filter(
+            update_clicks__gt=0  # Only include images with at least one update
+        )
+
+        # Filter by category if specified
+        if category_id:
+            try:
+                category_id = int(category_id)
+                queryset = queryset.filter(category_id=category_id)
+            except ValueError:
+                pass
+
+        # Filter by timeframe if specified
+        from datetime import datetime, timedelta
+        from django.utils import timezone
+
+        if timeframe:
+            now = timezone.now()
+            if timeframe == 'daily':
+                start_date = now - timedelta(days=1)
+            elif timeframe == 'weekly':
+                start_date = now - timedelta(weeks=1)
+            elif timeframe == 'monthly':
+                start_date = now - timedelta(days=30)
+            elif timeframe == 'yearly':
+                start_date = now - timedelta(days=365)
+            else:
+                start_date = None
+
+            if start_date:
+                queryset = queryset.filter(last_updated__gte=start_date)
+
+        # Get the most updated images
+        most_updated_images = queryset.order_by('-update_clicks', '-last_updated')[:limit]
+
+        images_data = []
+        for image in most_updated_images:
+            # Calculate activity level based on clicks
+            if image.update_clicks >= 20:
+                activity_level = 'very_high'
+            elif image.update_clicks >= 10:
+                activity_level = 'high'
+            elif image.update_clicks >= 5:
+                activity_level = 'medium'
+            else:
+                activity_level = 'low'
+
+            images_data.append({
+                'id': image.id,
+                'text': image.text,
+                'text_preview': image.text[:50] + '...' if len(image.text) > 50 else image.text,
+                'update_clicks': image.update_clicks,
+                'activity_level': activity_level,
+                'last_updated': image.last_updated.isoformat(),
+                'created_at': image.created_at.isoformat(),
+                'category': {
+                    'id': image.category.id if image.category else None,
+                    'name': image.category.name if image.category else 'Uncategorized',
+                    'show_in_landing': image.category.show_in_landing if image.category else False,
+                } if image.category else None,
+                'original_image_url': get_absolute_media_url(request,
+                                                             image.original_image.url) if image.original_image else None,
+                'output_image_url': get_absolute_media_url(request,
+                                                           image.output_image.url) if image.output_image else None,
+                'styling_info': {
+                    'font_family': image.font_family,
+                    'font_size': image.font_size,
+                    'font_color': image.font_color,
+                    'text_alignment': image.text_alignment,
+                    'font_weight': image.font_weight,
+                }
+            })
+
+        # Get statistics
+        total_images = StyledImage.objects.count()
+        total_updates = StyledImage.objects.aggregate(Sum('update_clicks'))['update_clicks__sum'] or 0
+        avg_updates = total_updates / total_images if total_images > 0 else 0
+
+        return JsonResponse({
+            'success': True,
+            'stats': {
+                'total_images_in_result': len(images_data),
+                'total_images_in_database': total_images,
+                'total_update_clicks': total_updates,
+                'average_clicks_per_image': round(avg_updates, 2),
+                'timeframe': timeframe,
+                'limit': limit,
+            },
+            'images': images_data
+        })
+
+    except Exception as e:
+        return JsonResponse({'error': f'Server error: {str(e)}'}, status=500)
+
+
