@@ -4,16 +4,16 @@ from django.views.decorators.csrf import csrf_exempt
 from django.core.files.storage import FileSystemStorage
 from django.conf import settings
 from .utils import add_text_to_image
-from .models import StyledImage, Category, SubCategory
+from .models import StyledImage, Category
 from django.core import serializers
-from django.db.models import Prefetch
+from django.db.models import Prefetch, Q, Sum
 import os
 import json
 
 
 def upload_page(request):
     """Render the upload page with categories"""
-    categories = Category.objects.all().prefetch_related('subcategories')
+    categories = Category.objects.all()
     return render(request, 'styler/upload.html', {
         'categories': categories
     })
@@ -24,18 +24,6 @@ def upload_and_style(request):
     """Handle image and text upload, style the text on image, return styled image"""
     if request.method == 'POST':
         try:
-            # Debug: Print ALL POST parameters
-            print("=== ALL POST PARAMETERS RECEIVED ===")
-            for key, value in request.POST.items():
-                print(f"{key}: {value}")
-            print("=====================================")
-
-            # Debug: Print FILES
-            print("=== FILES RECEIVED ===")
-            for key, value in request.FILES.items():
-                print(f"{key}: {value}")
-            print("======================")
-
             # Get the uploaded image
             if 'image' not in request.FILES:
                 return JsonResponse({'error': 'No image provided'}, status=400)
@@ -52,7 +40,7 @@ def upload_and_style(request):
             text_alignment = request.POST.get('text_alignment', 'center')
             font_weight = request.POST.get('font_weight', '600')
 
-            # Advanced parameters - CRITICAL: These must be in the request
+            # Advanced parameters
             text_rotate = request.POST.get('text_rotate', '0')
             text_opacity = request.POST.get('text_opacity', '100')
             enable_shadow = request.POST.get('enable_shadow', '')
@@ -65,30 +53,14 @@ def upload_and_style(request):
             letter_spacing = request.POST.get('letter_spacing', '0')
             line_height = request.POST.get('line_height', '1.2')
 
-            # Category and subcategory
+            # Category (no subcategory anymore)
             category_id = request.POST.get('category')
-            subcategory_id = request.POST.get('subcategory')
-
-            # Debug: Print all extracted parameters
-            print("=== EXTRACTED PARAMETERS ===")
-            print(f"Text: {text}")
-            print(f"Font Family: {font_family}")
-            print(f"Font Weight: {font_weight}")
-            print(f"Font Size: {font_size}")
-            print(f"Text Rotation: {text_rotate}")
-            print(f"Text Opacity: {text_opacity}")
-            print(f"Letter Spacing: {letter_spacing}")
-            print(f"Shadow Enabled: {enable_shadow}")
-            print(f"Shadow X: {shadow_x}, Y: {shadow_y}, Blur: {shadow_blur}")
-            print(f"Background Enabled: {enable_background}")
-            print(f"Line Height: {line_height}")
-            print("============================")
 
             # Validate inputs
             if not text:
                 return JsonResponse({'error': 'No text provided'}, status=400)
 
-            # Convert to appropriate types with error handling
+            # Convert to appropriate types
             try:
                 font_size = int(font_size)
                 x_position = int(x_position)
@@ -101,7 +73,6 @@ def upload_and_style(request):
                 letter_spacing = float(letter_spacing)
                 line_height = float(line_height)
             except ValueError as e:
-                print(f"ValueError in parameter conversion: {e}")
                 return JsonResponse({'error': f'Invalid numeric values: {str(e)}'}, status=400)
 
             # Validate ranges
@@ -116,12 +87,10 @@ def upload_and_style(request):
             try:
                 filename = fs.save(f"uploads/{image_file.name}", image_file)
                 image_path = fs.path(filename)
-                print(f"Image saved to: {image_path}")
             except Exception as e:
-                print(f"Error saving image: {e}")
                 return JsonResponse({'error': f'Error saving image: {str(e)}'}, status=500)
 
-            # Prepare style options - Include ALL parameters
+            # Prepare style options
             style_options = {
                 'font_size': font_size,
                 'font_color': font_color,
@@ -143,20 +112,10 @@ def upload_and_style(request):
                 'line_height': line_height,
             }
 
-            # Debug: Print style options being sent to image processing
-            print("=== STYLE OPTIONS SENT TO IMAGE PROCESSING ===")
-            for key, value in style_options.items():
-                print(f"{key}: {value}")
-            print("==============================================")
-
             # Add text to image
             try:
                 output_image_relative_path = add_text_to_image(image_path, text, style_options)
-                print(f"Image processing completed: {output_image_relative_path}")
             except Exception as e:
-                print(f"Error in add_text_to_image: {str(e)}")
-                import traceback
-                traceback.print_exc()
                 # Clean up uploaded file if processing fails
                 try:
                     if os.path.exists(image_path):
@@ -165,20 +124,16 @@ def upload_and_style(request):
                     pass
                 return JsonResponse({'error': f'Image processing failed: {str(e)}'}, status=500)
 
-            # Handle category relationships
+            # Handle category relationship
             category = None
-            subcategory = None
             if category_id:
                 try:
                     category = Category.objects.get(id=category_id)
-                    if subcategory_id:
-                        subcategory = SubCategory.objects.get(id=subcategory_id, category=category)
-                    print(f"Category set: {category.name}, Subcategory: {subcategory.name if subcategory else 'None'}")
-                except (Category.DoesNotExist, SubCategory.DoesNotExist) as e:
-                    print(f"Category/Subcategory not found: {e}")
+                except Category.DoesNotExist:
                     # Continue without category if not found
+                    pass
 
-            # Create database record - Save ALL parameters
+            # Create database record
             try:
                 styled_image = StyledImage.objects.create(
                     original_image=filename,
@@ -203,11 +158,9 @@ def upload_and_style(request):
                     line_height=line_height,
                     output_image=output_image_relative_path,
                     category=category,
-                    subcategory=subcategory
+                    update_clicks=0  # Initialize click counter
                 )
-                print(f"Database record created with ID: {styled_image.id}")
             except Exception as e:
-                print(f"Error creating database record: {e}")
                 # Clean up files if database save fails
                 try:
                     if os.path.exists(image_path):
@@ -221,41 +174,19 @@ def upload_and_style(request):
 
             # Return the styled image URL
             output_url = f"{settings.MEDIA_URL}{output_image_relative_path}"
-            print(f"Final output URL: {output_url}")
 
             return JsonResponse({
                 'success': True,
                 'output_image_url': output_url,
                 'styled_image_id': styled_image.id,
                 'message': 'Image successfully created with all styling parameters applied',
-                'debug_info': {
-                    'font_family_applied': font_family,
-                    'font_weight_applied': font_weight,
-                    'text_rotation_applied': text_rotate,
-                    'text_opacity_applied': text_opacity,
-                    'shadow_enabled': enable_shadow == 'on',
-                    'letter_spacing_applied': letter_spacing,
-                    'line_height_applied': line_height
-                }
             })
 
         except Exception as e:
-            print(f"General error in upload_and_style: {str(e)}")
-            import traceback
-            traceback.print_exc()
             return JsonResponse({'error': f'Server error: {str(e)}'}, status=500)
 
     return JsonResponse({'error': 'Method not allowed'}, status=405)
 
-def get_subcategories(request, category_id):
-    """API endpoint to get subcategories for a category"""
-    try:
-        subcategories = SubCategory.objects.filter(category_id=category_id).values('id', 'name')
-        return JsonResponse({
-            'subcategories': list(subcategories)
-        })
-    except Exception as e:
-        return JsonResponse({'error': str(e)}, status=500)
 
 def download_styled_image(request, image_id):
     """Download the styled image"""
@@ -332,6 +263,8 @@ def get_image_data(request, image_id):
                 'text_background': styled_image.text_background,
                 'letter_spacing': styled_image.letter_spacing,
                 'line_height': styled_image.line_height,
+                'update_clicks': styled_image.update_clicks,
+                'last_updated': styled_image.last_updated.isoformat(),
                 'output_image_url': styled_image.output_image.url if styled_image.output_image else None,
             }
         })
@@ -340,9 +273,10 @@ def get_image_data(request, image_id):
     except Exception as e:
         return JsonResponse({'error': f'Server error: {str(e)}'}, status=500)
 
+
 def list_styled_images(request):
     """List all styled images from database with category information"""
-    styled_images = StyledImage.objects.select_related('category', 'subcategory').all().order_by('-created_at')
+    styled_images = StyledImage.objects.select_related('category').all().order_by('-created_at')
 
     images_data = []
     for image in styled_images:
@@ -351,8 +285,6 @@ def list_styled_images(request):
             category_info = {
                 'category_id': image.category.id,
                 'category_name': image.category.name,
-                'subcategory_id': image.subcategory.id if image.subcategory else None,
-                'subcategory_name': image.subcategory.name if image.subcategory else None,
             }
 
         images_data.append({
@@ -363,6 +295,8 @@ def list_styled_images(request):
             'font_family': image.font_family,
             'x_position': image.x_position,
             'y_position': image.y_position,
+            'update_clicks': image.update_clicks,
+            'last_updated': image.last_updated.isoformat(),
             'category_info': category_info,
             'original_image_url': image.original_image.url if image.original_image else None,
             'output_image_url': image.output_image.url if image.output_image else None,
@@ -410,6 +344,7 @@ def update_text_and_regenerate(request):
                 text_background = data.get('text_background')
                 letter_spacing = data.get('letter_spacing')
                 line_height = data.get('line_height')
+                category_id = data.get('category_id')  # Added category update
 
             else:
                 # Form data fallback
@@ -433,6 +368,7 @@ def update_text_and_regenerate(request):
                 text_background = request.POST.get('text_background')
                 letter_spacing = request.POST.get('letter_spacing')
                 line_height = request.POST.get('line_height')
+                category_id = request.POST.get('category_id')
 
             # Validate required fields
             if not image_id:
@@ -450,21 +386,20 @@ def update_text_and_regenerate(request):
             if not styled_image.original_image:
                 return JsonResponse({'error': 'Original image not found'}, status=404)
 
-            # Debug: Print what we received
-            print("=== UPDATE TEXT - PARAMETERS RECEIVED ===")
-            print(f"Image ID: {image_id}")
-            print(f"New Text: {new_text}")
-            print(f"Font Family: {font_family}")
-            print(f"Font Weight: {font_weight}")
-            print(f"Text Rotation: {text_rotate}")
-            print(f"Text Opacity: {text_opacity}")
-            print(f"Letter Spacing: {letter_spacing}")
-            print(f"Shadow Enabled: {enable_shadow}")
-            print(f"Line Height: {line_height}")
-            print("==========================================")
+            # INCREMENT CLICK COUNTER - This is the key change!
+            styled_image.increment_clicks()
 
             # Update ALL fields - use request values if provided, otherwise keep existing values
             styled_image.text = new_text
+
+            # Update category if provided
+            if category_id:
+                try:
+                    category = Category.objects.get(id=category_id)
+                    styled_image.category = category
+                except Category.DoesNotExist:
+                    # Keep existing category if new one doesn't exist
+                    pass
 
             # Only update fields that were provided in the request
             if font_size is not None:
@@ -531,12 +466,6 @@ def update_text_and_regenerate(request):
                 'line_height': styled_image.line_height,
             }
 
-            # Debug: Print style options being used
-            print("=== UPDATE TEXT - STYLE OPTIONS BEING USED ===")
-            for key, value in style_options.items():
-                print(f"{key}: {value}")
-            print("==============================================")
-
             # Regenerate the image with new text and styles
             output_image_relative_path = add_text_to_image(
                 original_path,
@@ -563,9 +492,6 @@ def update_text_and_regenerate(request):
         except json.JSONDecodeError:
             return JsonResponse({'error': 'Invalid JSON data'}, status=400)
         except Exception as e:
-            print(f"Error in update_text_and_regenerate: {str(e)}")
-            import traceback
-            traceback.print_exc()
             return JsonResponse({'error': f'Server error: {str(e)}'}, status=500)
 
     return JsonResponse({'error': 'Only POST method allowed'}, status=405)
@@ -605,6 +531,7 @@ def update_text_and_regenerate_json(request):
                 text_background = data.get('text_background')
                 letter_spacing = data.get('letter_spacing')
                 line_height = data.get('line_height')
+                category_id = data.get('category_id')
 
             else:
                 image_id = request.POST.get('id')
@@ -627,6 +554,7 @@ def update_text_and_regenerate_json(request):
                 text_background = request.POST.get('text_background')
                 letter_spacing = request.POST.get('letter_spacing')
                 line_height = request.POST.get('line_height')
+                category_id = request.POST.get('category_id')
 
             # Validate required fields
             if not image_id:
@@ -644,6 +572,10 @@ def update_text_and_regenerate_json(request):
             if not styled_image.original_image:
                 return JsonResponse({'error': 'Original image not found'}, status=404)
 
+            # INCREMENT CLICK COUNTER
+            old_clicks = styled_image.update_clicks
+            styled_image.increment_clicks()
+
             # Store old values for response
             old_text = styled_image.text
             old_styles = {
@@ -658,6 +590,14 @@ def update_text_and_regenerate_json(request):
 
             # Update ALL fields
             styled_image.text = new_text
+
+            # Update category if provided
+            if category_id:
+                try:
+                    category = Category.objects.get(id=category_id)
+                    styled_image.category = category
+                except Category.DoesNotExist:
+                    pass
 
             # Only update fields that were provided in the request
             if font_size is not None:
@@ -742,6 +682,12 @@ def update_text_and_regenerate_json(request):
                 'success': True,
                 'message': 'Text and styles updated and image regenerated successfully',
                 'image_id': image_id,
+                'click_tracking': {
+                    'old_clicks': old_clicks,
+                    'new_clicks': styled_image.update_clicks,
+                    'total_clicks': styled_image.update_clicks,
+                    'last_updated': styled_image.last_updated.isoformat()
+                },
                 'old_text': old_text,
                 'new_text': new_text,
                 'styles_updated': {
@@ -766,55 +712,6 @@ def update_text_and_regenerate_json(request):
     return JsonResponse({'error': 'Only POST method allowed'}, status=405)
 
 
-def get_categories_with_images(request):
-    """
-    API endpoint to get all categories with only basic info and category image
-    Returns: JSON with category name, description, created_at, total_images, category_image
-    """
-    try:
-        # Get all categories with their subcategories and related images
-        categories = Category.objects.prefetch_related(
-            'subcategories',
-            'styled_images'
-        ).all()
-
-        categories_data = []
-
-        for category in categories:
-            category_data = {
-                'id': category.id,
-                'name': category.name,
-                'description': category.description,
-                'created_at': category.created_at.isoformat(),
-                'total_images': category.styled_images.count(),
-                'category_image': None  # Default to None
-            }
-
-            # Get category image - using the category_image field if it exists
-            # If you added the category_image field as per previous suggestions
-            if hasattr(category, 'category_image') and category.category_image:
-                category_data['category_image'] = category.category_image.url
-
-            # Fallback: Use the first image in the category as category image
-            elif category.styled_images.exists():
-                first_image = category.styled_images.first()
-                if first_image and first_image.output_image:
-                    category_data['category_image'] = first_image.output_image.url
-                elif first_image and first_image.original_image:
-                    category_data['category_image'] = first_image.original_image.url
-
-            categories_data.append(category_data)
-
-        return JsonResponse({
-            'success': True,
-            'total_categories': len(categories_data),
-            'categories': categories_data
-        })
-
-    except Exception as e:
-        return JsonResponse({'error': f'Server error: {str(e)}'}, status=500)
-
-
 def get_categories_basic(request):
     """
     API endpoint to get only basic category info with category image
@@ -832,12 +729,12 @@ def get_categories_basic(request):
                 'description': category.description,
                 'created_at': category.created_at.isoformat(),
                 'total_images': category.styled_images.count(),
+                'show_in_landing': category.show_in_landing,
                 'category_image': None
             }
 
-            # Get category image - check if category_image field exists
+            # Get category image
             if hasattr(category, 'category_image') and category.category_image:
-                # Use absolute URL
                 category_data['category_image'] = get_absolute_media_url(request, category.category_image.url)
 
             # Fallback to first image in category
@@ -859,6 +756,63 @@ def get_categories_basic(request):
     except Exception as e:
         return JsonResponse({'error': f'Server error: {str(e)}'}, status=500)
 
+
+def get_categories_landing(request):
+    """
+    NEW ENDPOINT: Get only categories marked for landing page display
+    Returns: JSON with categories that have show_in_landing = True
+    """
+    try:
+        # Filter categories that should be shown in landing page
+        landing_categories = Category.objects.filter(
+            show_in_landing=True
+        ).prefetch_related('styled_images')
+
+        categories_data = []
+
+        for category in landing_categories:
+            # Get some featured images for the category (limit to 4 for landing)
+            featured_images = category.styled_images.all()[:4]
+
+            category_data = {
+                'id': category.id,
+                'name': category.name,
+                'description': category.description,
+                'created_at': category.created_at.isoformat(),
+                'total_images': category.styled_images.count(),
+                'show_in_landing': category.show_in_landing,
+                'category_image': None,
+                'featured_images': []
+            }
+
+            # Get category image
+            if hasattr(category, 'category_image') and category.category_image:
+                category_data['category_image'] = get_absolute_media_url(request, category.category_image.url)
+
+            # Get featured images
+            for image in featured_images:
+                featured_image_data = {
+                    'id': image.id,
+                    'text': image.text[:50] + '...' if len(image.text) > 50 else image.text,
+                    'output_image_url': get_absolute_media_url(request,
+                                                               image.output_image.url) if image.output_image else None,
+                    'update_clicks': image.update_clicks,
+                    'last_updated': image.last_updated.isoformat(),
+                }
+                category_data['featured_images'].append(featured_image_data)
+
+            categories_data.append(category_data)
+
+        return JsonResponse({
+            'success': True,
+            'total_categories': len(categories_data),
+            'landing_categories': categories_data
+        })
+
+    except Exception as e:
+        return JsonResponse({'error': f'Server error: {str(e)}'}, status=500)
+
+
 def get_category_images(request, category_id):
     """
     API endpoint to get a specific category with its images
@@ -866,17 +820,8 @@ def get_category_images(request, category_id):
     try:
         category = Category.objects.prefetch_related(
             Prefetch(
-                'subcategories',
-                queryset=SubCategory.objects.prefetch_related(
-                    Prefetch(
-                        'styled_images',
-                        queryset=StyledImage.objects.select_related('category', 'subcategory')
-                    )
-                )
-            ),
-            Prefetch(
                 'styled_images',
-                queryset=StyledImage.objects.filter(subcategory__isnull=True)
+                queryset=StyledImage.objects.select_related('category')
             )
         ).get(id=category_id)
 
@@ -886,13 +831,12 @@ def get_category_images(request, category_id):
             'description': category.description,
             'created_at': category.created_at.isoformat(),
             'total_images': category.styled_images.count(),
-            'subcategories': [],
+            'show_in_landing': category.show_in_landing,
             'images': []
         }
 
-        # Get images directly under this category
-        direct_images = category.styled_images.filter(subcategory__isnull=True)
-        for image in direct_images:
+        # Get all images in this category
+        for image in category.styled_images.all():
             category_data['images'].append({
                 'id': image.id,
                 'text': image.text,
@@ -901,37 +845,14 @@ def get_category_images(request, category_id):
                 'font_family': image.font_family,
                 'x_position': image.x_position,
                 'y_position': image.y_position,
-                'original_image_url': get_absolute_media_url(request, image.original_image.url) if image.original_image else None,
-                'output_image_url': get_absolute_media_url(request, image.output_image.url) if image.output_image else None,
+                'update_clicks': image.update_clicks,
+                'last_updated': image.last_updated.isoformat(),
+                'original_image_url': get_absolute_media_url(request,
+                                                             image.original_image.url) if image.original_image else None,
+                'output_image_url': get_absolute_media_url(request,
+                                                           image.output_image.url) if image.output_image else None,
                 'created_at': image.created_at.isoformat(),
             })
-
-        # Get subcategories with their images
-        for subcategory in category.subcategories.all():
-            subcategory_data = {
-                'id': subcategory.id,
-                'name': subcategory.name,
-                'description': subcategory.description,
-                'created_at': subcategory.created_at.isoformat(),
-                'total_images': subcategory.styled_images.count(),
-                'images': []
-            }
-
-            for image in subcategory.styled_images.all():
-                subcategory_data['images'].append({
-                    'id': image.id,
-                    'text': image.text,
-                    'font_size': image.font_size,
-                    'font_color': image.font_color,
-                    'font_family': image.font_family,
-                    'x_position': image.x_position,
-                    'y_position': image.y_position,
-                    'original_image_url': get_absolute_media_url(request, image.original_image.url) if image.original_image else None,
-                    'output_image_url': get_absolute_media_url(request, image.output_image.url) if image.output_image else None,
-                    'created_at': image.created_at.isoformat(),
-                })
-
-            category_data['subcategories'].append(subcategory_data)
 
         return JsonResponse({
             'success': True,
@@ -940,55 +861,6 @@ def get_category_images(request, category_id):
 
     except Category.DoesNotExist:
         return JsonResponse({'error': 'Category not found'}, status=404)
-    except Exception as e:
-        return JsonResponse({'error': f'Server error: {str(e)}'}, status=500)
-def get_subcategory_images(request, subcategory_id):
-    """
-    API endpoint to get a specific subcategory with its images
-    """
-    try:
-        subcategory = SubCategory.objects.prefetch_related(
-            Prefetch(
-                'styled_images',
-                queryset=StyledImage.objects.select_related('category', 'subcategory')
-            )
-        ).get(id=subcategory_id)
-
-        subcategory_data = {
-            'id': subcategory.id,
-            'name': subcategory.name,
-            'description': subcategory.description,
-            'created_at': subcategory.created_at.isoformat(),
-            'category': {
-                'id': subcategory.category.id,
-                'name': subcategory.category.name,
-                'description': subcategory.category.description
-            },
-            'total_images': subcategory.styled_images.count(),
-            'images': []
-        }
-
-        for image in subcategory.styled_images.all():
-            subcategory_data['images'].append({
-                'id': image.id,
-                'text': image.text,
-                'font_size': image.font_size,
-                'font_color': image.font_color,
-                'font_family': image.font_family,
-                'x_position': image.x_position,
-                'y_position': image.y_position,
-                'original_image_url': image.original_image.url if image.original_image else None,
-                'output_image_url': image.output_image.url if image.output_image else None,
-                'created_at': image.created_at.isoformat(),
-            })
-
-        return JsonResponse({
-            'success': True,
-            'subcategory': subcategory_data
-        })
-
-    except SubCategory.DoesNotExist:
-        return JsonResponse({'error': 'Subcategory not found'}, status=404)
     except Exception as e:
         return JsonResponse({'error': f'Server error: {str(e)}'}, status=500)
 
@@ -1004,6 +876,52 @@ def get_absolute_media_url(request, relative_url):
     else:
         # Fallback for when there's no request (shouldn't happen in views)
         return f"https://yousefelmesalamy.pythonanywhere.com{relative_url}"
+
+
+def get_image_stats(request):
+    """
+    NEW ENDPOINT: Get statistics about image updates
+    Returns: JSON with click statistics
+    """
+    try:
+        # Get total images
+        total_images = StyledImage.objects.count()
+
+        # Get images with clicks
+        images_with_clicks = StyledImage.objects.filter(update_clicks__gt=0).count()
+
+        # Get total clicks across all images
+        total_clicks = StyledImage.objects.aggregate(Sum('update_clicks'))['update_clicks__sum'] or 0
+
+        # Get top 10 most updated images
+        top_images = StyledImage.objects.select_related('category').order_by('-update_clicks')[:10]
+
+        top_images_data = []
+        for image in top_images:
+            top_images_data.append({
+                'id': image.id,
+                'text': image.text[:30] + '...' if len(image.text) > 30 else image.text,
+                'update_clicks': image.update_clicks,
+                'last_updated': image.last_updated.isoformat(),
+                'category': image.category.name if image.category else 'Uncategorized',
+                'output_image_url': get_absolute_media_url(request,
+                                                           image.output_image.url) if image.output_image else None,
+            })
+
+        return JsonResponse({
+            'success': True,
+            'stats': {
+                'total_images': total_images,
+                'images_with_clicks': images_with_clicks,
+                'total_clicks': total_clicks,
+                'average_clicks_per_image': total_clicks / total_images if total_images > 0 else 0,
+            },
+            'top_updated_images': top_images_data
+        })
+
+    except Exception as e:
+        return JsonResponse({'error': f'Server error: {str(e)}'}, status=500)
+
 
 def get_uncategorized_images(request):
     """
@@ -1022,6 +940,8 @@ def get_uncategorized_images(request):
                 'font_family': image.font_family,
                 'x_position': image.x_position,
                 'y_position': image.y_position,
+                'update_clicks': image.update_clicks,
+                'last_updated': image.last_updated.isoformat(),
                 'original_image_url': image.original_image.url if image.original_image else None,
                 'output_image_url': image.output_image.url if image.output_image else None,
                 'created_at': image.created_at.isoformat(),

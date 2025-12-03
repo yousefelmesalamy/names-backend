@@ -6,15 +6,13 @@ urlpatterns = [
     path('api/upload-style/', views.upload_and_style, name='upload_and_style'),
     path('api/update-text/', views.update_text_and_regenerate, name='update_text'),
     path('api/update-text-json/', views.update_text_and_regenerate_json, name='update_text_json'),
-    path('api/get-subcategories/<int:category_id>/', views.get_subcategories, name='get_subcategories'),
     path('api/categories/', views.get_categories_basic, name='categories-basic'),
-    # path('api/categories/', views.get_categories_with_images, name='get_categories_with_images'),
+    path('api/categories/landing/', views.get_categories_landing, name='categories-landing'),  # NEW
     path('api/categories/<int:category_id>/', views.get_category_images, name='get_category_images'),
-    path('api/subcategories/<int:subcategory_id>/', views.get_subcategory_images, name='get_subcategory_images'),
-    path('api/uncategorized/', views.get_uncategorized_images, name='get_uncategorized_images'),
+    path('api/images/stats/', views.get_image_stats, name='image_stats'),  # NEW
     path('download/<int:image_id>/', views.download_styled_image, name='download_styled_image'),
     path('image/<int:image_id>/', views.get_styled_image, name='get_styled_image'),
     path('api/images/', views.list_styled_images, name='list_styled_images'),
     path('api/get-image-data/<int:image_id>/', views.get_image_data, name='get_image_data'),
-
+    path('api/uncategorized/', views.get_uncategorized_images, name='get_uncategorized_images'),
 ]

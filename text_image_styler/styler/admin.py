@@ -1,40 +1,22 @@
 from django.contrib import admin
 from django.utils.html import format_html
-from .models import Category, SubCategory, StyledImage
-
-
-class SubCategoryInline(admin.TabularInline):
-    model = SubCategory
-    extra = 1
-    fields = ['name', 'description']
+from .models import Category, StyledImage
 
 
 @admin.register(Category)
 class CategoryAdmin(admin.ModelAdmin):
-    list_display = ['name', 'styled_images_count', 'subcategories_count', 'created_at']
+    list_display = [
+        'name',
+        'show_in_landing',  # Use the field, not the method
+        'styled_images_count',
+        'created_at'
+    ]
+    list_editable = ['show_in_landing']  # This should be the field name
+    list_filter = ['show_in_landing', 'created_at']
     search_fields = ['name', 'description']
-    inlines = [SubCategoryInline]
 
     def styled_images_count(self, obj):
         return obj.styled_images.count()
-
-    styled_images_count.short_description = 'Images'
-
-    def subcategories_count(self, obj):
-        return obj.subcategories.count()
-
-    subcategories_count.short_description = 'Subcategories'
-
-
-@admin.register(SubCategory)
-class SubCategoryAdmin(admin.ModelAdmin):
-    list_display = ['name', 'category', 'styled_images_count', 'created_at']
-    list_filter = ['category']
-    search_fields = ['name', 'category__name', 'description']
-
-    def styled_images_count(self, obj):
-        return obj.styled_images.count()
-
     styled_images_count.short_description = 'Images'
 
 
@@ -44,7 +26,8 @@ class StyledImageAdmin(admin.ModelAdmin):
         'id',
         'text_preview',
         'category_display',
-        'subcategory_display',
+        'update_clicks',
+        'last_updated',
         'font_size',
         'font_family',
         'original_image_preview_list',
@@ -55,29 +38,29 @@ class StyledImageAdmin(admin.ModelAdmin):
     # Fields that can be used for filtering
     list_filter = [
         'category',
-        'subcategory',
         'font_family',
         'font_size',
-        'created_at'
+        'created_at',
+        'update_clicks',
     ]
 
     # Fields that can be searched
     search_fields = [
         'text',
         'font_family',
-        'category__name',
-        'subcategory__name'
+        'category__name'
     ]
 
     # Fields that are read-only
     readonly_fields = [
         'created_at',
+        'last_updated',
+        'update_clicks',
         'original_image_preview',
         'output_image_preview',
         'original_image_preview_list',
         'output_image_preview_list',
         'category_display',
-        'subcategory_display',
     ]
 
     # Fields to display in the detail view with sections
@@ -85,9 +68,15 @@ class StyledImageAdmin(admin.ModelAdmin):
         ('Category Information', {
             'fields': (
                 'category',
-                'subcategory',
                 'category_display',
             )
+        }),
+        ('Click Tracking', {
+            'fields': (
+                'update_clicks',
+                'last_updated',
+            ),
+            'classes': ('collapse',)
         }),
         ('Image Information', {
             'fields': (
@@ -125,7 +114,6 @@ class StyledImageAdmin(admin.ModelAdmin):
         if len(obj.text) > 30:
             return f"{obj.text[:30]}..."
         return obj.text
-
     text_preview.short_description = 'Text'
 
     def category_display(self, obj):
@@ -136,19 +124,7 @@ class StyledImageAdmin(admin.ModelAdmin):
                 obj.category.name
             )
         return format_html('<span style="color: #999;">No category</span>')
-
     category_display.short_description = 'Category'
-
-    def subcategory_display(self, obj):
-        """Display subcategory with styling"""
-        if obj.subcategory:
-            return format_html(
-                '<span style="background: #f3e5f5; padding: 2px 8px; border-radius: 12px; font-size: 12px;">{}</span>',
-                obj.subcategory.name
-            )
-        return format_html('<span style="color: #999;">-</span>')
-
-    subcategory_display.short_description = 'Subcategory'
 
     def original_image_preview_list(self, obj):
         """Display small original image preview in list view"""
@@ -158,7 +134,6 @@ class StyledImageAdmin(admin.ModelAdmin):
                 obj.original_image.url
             )
         return format_html('<span style="color: #999;">-</span>')
-
     original_image_preview_list.short_description = 'Original'
 
     def output_image_preview_list(self, obj):
@@ -169,7 +144,6 @@ class StyledImageAdmin(admin.ModelAdmin):
                 obj.output_image.url
             )
         return format_html('<span style="color: #999;">-</span>')
-
     output_image_preview_list.short_description = 'Styled'
 
     def original_image_preview(self, obj):
@@ -184,7 +158,6 @@ class StyledImageAdmin(admin.ModelAdmin):
                 obj.original_image.url
             )
         return format_html('<span style="color: #999;">No original image</span>')
-
     original_image_preview.short_description = 'Original Image Preview'
 
     def output_image_preview(self, obj):
@@ -199,18 +172,16 @@ class StyledImageAdmin(admin.ModelAdmin):
                 obj.output_image.url
             )
         return format_html('<span style="color: #999;">No output image generated</span>')
-
     output_image_preview.short_description = 'Styled Image Preview'
 
     # Configuration for the actions dropdown
-    actions = ['assign_to_category', 'regenerate_output_images']
+    actions = ['assign_to_category', 'regenerate_output_images', 'reset_clicks']
 
     def assign_to_category(self, request, queryset):
         """Admin action to assign multiple images to a category"""
         from django.http import HttpResponseRedirect
         from django.urls import reverse
 
-        # Store selected IDs in session for category assignment
         selected_ids = queryset.values_list('id', flat=True)
         request.session['category_assignment_ids'] = list(selected_ids)
 
@@ -218,10 +189,7 @@ class StyledImageAdmin(admin.ModelAdmin):
             request,
             f"Please select a category for {len(selected_ids)} images."
         )
-
-        # Redirect to a category selection page (you can create this)
         return HttpResponseRedirect(reverse('admin:styler_category_changelist'))
-
     assign_to_category.short_description = "Assign to category"
 
     def regenerate_output_images(self, request, queryset):
@@ -232,10 +200,7 @@ class StyledImageAdmin(admin.ModelAdmin):
         for styled_image in queryset:
             if styled_image.original_image:
                 try:
-                    # Get the original image path
                     original_path = styled_image.original_image.path
-
-                    # Style options
                     style_options = {
                         'font_size': styled_image.font_size,
                         'font_color': styled_image.font_color,
@@ -243,51 +208,40 @@ class StyledImageAdmin(admin.ModelAdmin):
                         'y_position': styled_image.y_position,
                         'font_family': styled_image.font_family,
                     }
-
-                    # Regenerate the output image
                     output_image_path = add_text_to_image(
                         original_path,
                         styled_image.text,
                         style_options
                     )
-
-                    # Update the model
                     styled_image.output_image = output_image_path
                     styled_image.save()
-
                     regenerated_count += 1
-
                 except Exception as e:
                     self.message_user(
                         request,
                         f"Error regenerating image {styled_image.id}: {str(e)}",
                         level='ERROR'
                     )
-
         self.message_user(
             request,
             f"Successfully regenerated {regenerated_count} output images."
         )
-
     regenerate_output_images.short_description = "Regenerate output images"
+
+    def reset_clicks(self, request, queryset):
+        """Admin action to reset click counters"""
+        updated = queryset.update(update_clicks=0)
+        self.message_user(
+            request,
+            f"Successfully reset click counters for {updated} images."
+        )
+    reset_clicks.short_description = "Reset click counters"
 
     # Admin configuration
     list_per_page = 20
     ordering = ['-created_at']
     date_hierarchy = 'created_at'
-
-    # Make the list view more compact
     list_display_links = ['id', 'text_preview']
-
-    # Auto-select subcategories based on category
-    def get_form(self, request, obj=None, **kwargs):
-        form = super().get_form(request, obj, **kwargs)
-        if 'category' in form.base_fields and 'subcategory' in form.base_fields:
-            form.base_fields['subcategory'].queryset = SubCategory.objects.none()
-
-            if obj and obj.category:
-                form.base_fields['subcategory'].queryset = SubCategory.objects.filter(category=obj.category)
-        return form
 
 
 # Register the StyledImage model
