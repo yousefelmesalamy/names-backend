@@ -4,7 +4,7 @@ from django.views.decorators.csrf import csrf_exempt
 from django.core.files.storage import FileSystemStorage
 from django.conf import settings
 from .utils import add_text_to_image
-from .models import StyledImage, Category
+from .models import StyledImage, Category, Tag
 from django.core import serializers
 from django.db.models import Prefetch, Q, Sum
 import os
@@ -32,6 +32,8 @@ def upload_and_style(request):
 
             # Get all styling parameters with proper defaults
             text = request.POST.get('text', '').strip()
+            image_name = request.POST.get('image_name', '').strip()  # NEW
+            tags_input = request.POST.get('tags', '')  # NEW - comma separated tags
             font_size = request.POST.get('font_size', '48')
             font_color = request.POST.get('font_color', '#FFFFFF')
             x_position = request.POST.get('x_position', '250')
@@ -138,6 +140,7 @@ def upload_and_style(request):
                 styled_image = StyledImage.objects.create(
                     original_image=filename,
                     text=text,
+                    image_name=image_name if image_name else None,  # NEW
                     font_size=font_size,
                     font_color=font_color,
                     x_position=x_position,
@@ -160,6 +163,14 @@ def upload_and_style(request):
                     category=category,
                     update_clicks=0  # Initialize click counter
                 )
+
+                # Handle tags - NEW
+                if tags_input:
+                    tags_list = [tag.strip() for tag in tags_input.split(',') if tag.strip()]
+                    for tag_name in tags_list:
+                        tag, created = Tag.objects.get_or_create(name=tag_name.lower())
+                        styled_image.tags.add(tag)
+
             except Exception as e:
                 # Clean up files if database save fails
                 try:
@@ -179,6 +190,8 @@ def upload_and_style(request):
                 'success': True,
                 'output_image_url': output_url,
                 'styled_image_id': styled_image.id,
+                'image_name': styled_image.image_name,
+                'tags': [tag.name for tag in styled_image.tags.all()],  # NEW
                 'message': 'Image successfully created with all styling parameters applied',
             })
 
@@ -186,7 +199,6 @@ def upload_and_style(request):
             return JsonResponse({'error': f'Server error: {str(e)}'}, status=500)
 
     return JsonResponse({'error': 'Method not allowed'}, status=405)
-
 
 def download_styled_image(request, image_id):
     """Download the styled image"""
@@ -238,12 +250,16 @@ def get_styled_image(request, image_id):
 def get_image_data(request, image_id):
     """Get all styling data for a specific image for editing"""
     try:
-        styled_image = StyledImage.objects.get(id=image_id)
+        styled_image = StyledImage.objects.prefetch_related('tags').get(id=image_id)
+
+        # Get tags data - NEW
+        tags_data = [{'id': tag.id, 'name': tag.name} for tag in styled_image.tags.all()]
 
         return JsonResponse({
             'success': True,
             'image_data': {
                 'id': styled_image.id,
+                'image_name': styled_image.image_name,  # NEW
                 'text': styled_image.text,
                 'font_size': styled_image.font_size,
                 'font_color': styled_image.font_color,
@@ -265,6 +281,9 @@ def get_image_data(request, image_id):
                 'line_height': styled_image.line_height,
                 'update_clicks': styled_image.update_clicks,
                 'last_updated': styled_image.last_updated.isoformat(),
+                'category_id': styled_image.category.id if styled_image.category else None,
+                'category_name': styled_image.category.name if styled_image.category else None,
+                'tags': tags_data,  # NEW
                 'output_image_url': styled_image.output_image.url if styled_image.output_image else None,
             }
         })
@@ -273,10 +292,9 @@ def get_image_data(request, image_id):
     except Exception as e:
         return JsonResponse({'error': f'Server error: {str(e)}'}, status=500)
 
-
 def list_styled_images(request):
     """List all styled images from database with category information"""
-    styled_images = StyledImage.objects.select_related('category').all().order_by('-created_at')
+    styled_images = StyledImage.objects.select_related('category').prefetch_related('tags').all().order_by('-created_at')
 
     images_data = []
     for image in styled_images:
@@ -285,10 +303,15 @@ def list_styled_images(request):
             category_info = {
                 'category_id': image.category.id,
                 'category_name': image.category.name,
+                'category_show_in_landing': image.category.show_in_landing,  # NEW
             }
+
+        # Get tags - NEW
+        tags = [{'id': tag.id, 'name': tag.name} for tag in image.tags.all()]
 
         images_data.append({
             'id': image.id,
+            'image_name': image.image_name,  # NEW
             'text': image.text,
             'font_size': image.font_size,
             'font_color': image.font_color,
@@ -298,6 +321,7 @@ def list_styled_images(request):
             'update_clicks': image.update_clicks,
             'last_updated': image.last_updated.isoformat(),
             'category_info': category_info,
+            'tags': tags,  # NEW
             'original_image_url': image.original_image.url if image.original_image else None,
             'output_image_url': image.output_image.url if image.output_image else None,
             'created_at': image.created_at.isoformat(),
@@ -308,7 +332,6 @@ def list_styled_images(request):
         'total_images': len(images_data),
         'images': images_data
     })
-
 
 @csrf_exempt
 def update_text_and_regenerate(request):
@@ -511,6 +534,8 @@ def update_text_and_regenerate_json(request):
                 data = json.loads(request.body)
                 image_id = data.get('id')
                 new_text = data.get('text', '').strip()
+                image_name = data.get('image_name', '').strip()  # NEW
+                tags_input = data.get('tags', '')  # NEW
 
                 # Get ALL styling parameters from the request
                 font_size = data.get('font_size')
@@ -536,6 +561,8 @@ def update_text_and_regenerate_json(request):
             else:
                 image_id = request.POST.get('id')
                 new_text = request.POST.get('text', '').strip()
+                image_name = request.POST.get('image_name', '').strip()  # NEW
+                tags_input = request.POST.get('tags', '')  # NEW
                 font_size = request.POST.get('font_size')
                 font_color = request.POST.get('font_color')
                 x_position = request.POST.get('x_position')
@@ -565,7 +592,7 @@ def update_text_and_regenerate_json(request):
 
             # Get the existing styled image
             try:
-                styled_image = StyledImage.objects.get(id=image_id)
+                styled_image = StyledImage.objects.prefetch_related('tags').get(id=image_id)
             except StyledImage.DoesNotExist:
                 return JsonResponse({'error': 'Image not found'}, status=404)
 
@@ -591,6 +618,10 @@ def update_text_and_regenerate_json(request):
             # Update ALL fields
             styled_image.text = new_text
 
+            # Update image name if provided - NEW
+            if image_name is not None:
+                styled_image.image_name = image_name if image_name else None
+
             # Update category if provided
             if category_id:
                 try:
@@ -598,6 +629,17 @@ def update_text_and_regenerate_json(request):
                     styled_image.category = category
                 except Category.DoesNotExist:
                     pass
+
+            # Update tags if provided - NEW
+            if tags_input is not None:
+                # Clear existing tags
+                styled_image.tags.clear()
+
+                # Add new tags
+                tags_list = [tag.strip() for tag in str(tags_input).split(',') if tag.strip()]
+                for tag_name in tags_list:
+                    tag, created = Tag.objects.get_or_create(name=tag_name.lower())
+                    styled_image.tags.add(tag)
 
             # Only update fields that were provided in the request
             if font_size is not None:
@@ -682,6 +724,8 @@ def update_text_and_regenerate_json(request):
                 'success': True,
                 'message': 'Text and styles updated and image regenerated successfully',
                 'image_id': image_id,
+                'image_name': styled_image.image_name,  # NEW
+                'tags': [tag.name for tag in styled_image.tags.all()],  # NEW
                 'click_tracking': {
                     'old_clicks': old_clicks,
                     'new_clicks': styled_image.update_clicks,
@@ -821,7 +865,7 @@ def get_category_images(request, category_id):
         category = Category.objects.prefetch_related(
             Prefetch(
                 'styled_images',
-                queryset=StyledImage.objects.select_related('category')
+                queryset=StyledImage.objects.select_related('category').prefetch_related('tags')  # Added tags
             )
         ).get(id=category_id)
 
@@ -837,8 +881,12 @@ def get_category_images(request, category_id):
 
         # Get all images in this category
         for image in category.styled_images.all():
+            # Get tags
+            tags = [{'id': tag.id, 'name': tag.name} for tag in image.tags.all()]
+
             category_data['images'].append({
                 'id': image.id,
+                'image_name': image.image_name,  # NEW
                 'text': image.text,
                 'font_size': image.font_size,
                 'font_color': image.font_color,
@@ -847,6 +895,7 @@ def get_category_images(request, category_id):
                 'y_position': image.y_position,
                 'update_clicks': image.update_clicks,
                 'last_updated': image.last_updated.isoformat(),
+                'tags': tags,  # NEW
                 'original_image_url': get_absolute_media_url(request,
                                                              image.original_image.url) if image.original_image else None,
                 'output_image_url': get_absolute_media_url(request,
@@ -863,7 +912,6 @@ def get_category_images(request, category_id):
         return JsonResponse({'error': 'Category not found'}, status=404)
     except Exception as e:
         return JsonResponse({'error': f'Server error: {str(e)}'}, status=500)
-
 
 def get_absolute_media_url(request, relative_url):
     """Convert relative media URL to absolute URL"""
@@ -928,12 +976,16 @@ def get_uncategorized_images(request):
     API endpoint to get all images that don't belong to any category
     """
     try:
-        uncategorized_images = StyledImage.objects.filter(category__isnull=True)
+        uncategorized_images = StyledImage.objects.filter(category__isnull=True).prefetch_related('tags')
 
         images_data = []
         for image in uncategorized_images:
+            # Get tags
+            tags = [{'id': tag.id, 'name': tag.name} for tag in image.tags.all()]
+
             images_data.append({
                 'id': image.id,
+                'image_name': image.image_name,  # NEW
                 'text': image.text,
                 'font_size': image.font_size,
                 'font_color': image.font_color,
@@ -942,6 +994,7 @@ def get_uncategorized_images(request):
                 'y_position': image.y_position,
                 'update_clicks': image.update_clicks,
                 'last_updated': image.last_updated.isoformat(),
+                'tags': tags,  # NEW
                 'original_image_url': image.original_image.url if image.original_image else None,
                 'output_image_url': image.output_image.url if image.output_image else None,
                 'created_at': image.created_at.isoformat(),
@@ -955,7 +1008,6 @@ def get_uncategorized_images(request):
 
     except Exception as e:
         return JsonResponse({'error': f'Server error: {str(e)}'}, status=500)
-
 
 def get_trending_images(request):
     """
@@ -1147,3 +1199,139 @@ def get_most_updated_images(request):
         return JsonResponse({'error': f'Server error: {str(e)}'}, status=500)
 
 
+def search_images(request):
+    """
+    NEW ENDPOINT: Unified search across images, tags, categories, and image names
+    GET parameters:
+        - q: search query (REQUIRED) - searches in image_name, text, category name, tags
+        - category_id: filter by specific category (optional)
+        - tag: filter by specific tag name (optional)
+        - limit: maximum number of results (default: 20)
+    """
+    try:
+        # Get query parameters
+        search_query = request.GET.get('q', '').strip()
+
+        # REQUIRE q parameter - if empty, return error
+        if not search_query:
+            return JsonResponse({
+                'success': False,
+                'error': 'Search query parameter "q" is required',
+                'message': 'Please provide a search term using ?q=searchterm'
+            }, status=400)
+
+        category_id = request.GET.get('category_id')
+        tag_name = request.GET.get('tag')
+        limit = request.GET.get('limit', 20)
+
+        try:
+            limit = int(limit)
+            if limit > 100:
+                limit = 100
+            if limit < 1:
+                limit = 20
+        except ValueError:
+            limit = 20
+
+        # Start with base queryset
+        queryset = StyledImage.objects.select_related('category').prefetch_related('tags').all()
+
+        # Apply search query (now required)
+        queryset = queryset.filter(
+            Q(image_name__icontains=search_query) |
+            Q(text__icontains=search_query) |
+            Q(category__name__icontains=search_query) |
+            Q(tags__name__icontains=search_query)
+        ).distinct()
+
+        # Filter by category if specified
+        if category_id:
+            try:
+                category_id = int(category_id)
+                queryset = queryset.filter(category_id=category_id)
+            except ValueError:
+                pass
+
+        # Filter by tag if specified
+        if tag_name:
+            queryset = queryset.filter(tags__name__iexact=tag_name)
+
+        # Order and limit results
+        search_results = queryset.order_by('-created_at')[:limit]
+
+        # Prepare response data
+        images_data = []
+        for image in search_results:
+            # Get category info
+            category_info = None
+            if image.category:
+                category_info = {
+                    'category_id': image.category.id,
+                    'category_name': image.category.name,
+                    'category_show_in_landing': image.category.show_in_landing,
+                }
+
+            # Get tags
+            tags = [{'id': tag.id, 'name': tag.name} for tag in image.tags.all()]
+
+            images_data.append({
+                'id': image.id,
+                'image_name': image.image_name,
+                'text': image.text,
+                'font_size': image.font_size,
+                'font_color': image.font_color,
+                'font_family': image.font_family,
+                'x_position': image.x_position,
+                'y_position': image.y_position,
+                'update_clicks': image.update_clicks,
+                'last_updated': image.last_updated.isoformat(),
+                'category_info': category_info,
+                'tags': tags,
+                'original_image_url': get_absolute_media_url(request,
+                                                             image.original_image.url) if image.original_image else None,
+                'output_image_url': get_absolute_media_url(request,
+                                                           image.output_image.url) if image.output_image else None,
+                'created_at': image.created_at.isoformat(),
+            })
+
+        return JsonResponse({
+            'success': True,
+            'search_query': search_query,
+            'filters': {
+                'category_id': category_id,
+                'tag': tag_name,
+            },
+            'total_results': len(images_data),
+            'limit': limit,
+            'images': images_data
+        })
+
+    except Exception as e:
+        return JsonResponse({'error': f'Server error: {str(e)}'}, status=500)
+
+def list_all_tags(request):
+    """
+    NEW ENDPOINT: List all available tags with usage count
+    """
+    try:
+        tags = Tag.objects.annotate(
+            image_count=models.Count('styled_images')
+        ).order_by('-image_count', 'name')
+
+        tags_data = []
+        for tag in tags:
+            tags_data.append({
+                'id': tag.id,
+                'name': tag.name,
+                'image_count': tag.image_count,
+                'created_at': tag.created_at.isoformat(),
+            })
+
+        return JsonResponse({
+            'success': True,
+            'total_tags': len(tags_data),
+            'tags': tags_data
+        })
+
+    except Exception as e:
+        return JsonResponse({'error': f'Server error: {str(e)}'}, status=500)

@@ -1,17 +1,28 @@
 from django.contrib import admin
 from django.utils.html import format_html
-from .models import Category, StyledImage
+from .models import Category, StyledImage, Tag  # Added Tag
+
+
+@admin.register(Tag)
+class TagAdmin(admin.ModelAdmin):
+    list_display = ['name', 'styled_images_count', 'created_at']
+    search_fields = ['name']
+    ordering = ['name']
+
+    def styled_images_count(self, obj):
+        return obj.styled_images.count()
+    styled_images_count.short_description = 'Images'
 
 
 @admin.register(Category)
 class CategoryAdmin(admin.ModelAdmin):
     list_display = [
         'name',
-        'show_in_landing',  # Use the field, not the method
+        'show_in_landing',
         'styled_images_count',
         'created_at'
     ]
-    list_editable = ['show_in_landing']  # This should be the field name
+    list_editable = ['show_in_landing']
     list_filter = ['show_in_landing', 'created_at']
     search_fields = ['name', 'description']
 
@@ -24,12 +35,12 @@ class StyledImageAdmin(admin.ModelAdmin):
     # Fields to display in the list view
     list_display = [
         'id',
+        'image_name_display',
         'text_preview',
         'category_display',
+        'tags_display',  # NEW
         'update_clicks',
         'last_updated',
-        'font_size',
-        'font_family',
         'original_image_preview_list',
         'output_image_preview_list',
         'created_at',
@@ -38,6 +49,7 @@ class StyledImageAdmin(admin.ModelAdmin):
     # Fields that can be used for filtering
     list_filter = [
         'category',
+        'tags',  # NEW
         'font_family',
         'font_size',
         'created_at',
@@ -46,9 +58,11 @@ class StyledImageAdmin(admin.ModelAdmin):
 
     # Fields that can be searched
     search_fields = [
+        'image_name',  # NEW
         'text',
         'font_family',
-        'category__name'
+        'category__name',
+        'tags__name',  # NEW
     ]
 
     # Fields that are read-only
@@ -61,14 +75,26 @@ class StyledImageAdmin(admin.ModelAdmin):
         'original_image_preview_list',
         'output_image_preview_list',
         'category_display',
+        'tags_display',  # NEW
     ]
+
+    # Filter horizontally for many-to-many fields
+    filter_horizontal = ['tags']  # NEW
 
     # Fields to display in the detail view with sections
     fieldsets = (
-        ('Category Information', {
+        ('Basic Information', {
+            'fields': (
+                'image_name',  # NEW
+                'text',
+            )
+        }),
+        ('Categorization', {
             'fields': (
                 'category',
                 'category_display',
+                'tags',  # NEW
+                'tags_display',
             )
         }),
         ('Click Tracking', {
@@ -86,11 +112,6 @@ class StyledImageAdmin(admin.ModelAdmin):
                 'output_image_preview',
             )
         }),
-        ('Text Content', {
-            'fields': (
-                'text',
-            )
-        }),
         ('Styling Options', {
             'fields': (
                 'font_family',
@@ -98,7 +119,25 @@ class StyledImageAdmin(admin.ModelAdmin):
                 'font_color',
                 'x_position',
                 'y_position',
+                'text_alignment',
+                'font_weight',
             )
+        }),
+        ('Advanced Styling', {
+            'fields': (
+                'text_rotate',
+                'text_opacity',
+                'letter_spacing',
+                'line_height',
+                'enable_shadow',
+                'shadow_x',
+                'shadow_y',
+                'shadow_blur',
+                'shadow_color',
+                'enable_background',
+                'text_background',
+            ),
+            'classes': ('collapse',)
         }),
         ('Metadata', {
             'fields': (
@@ -109,6 +148,14 @@ class StyledImageAdmin(admin.ModelAdmin):
     )
 
     # Custom methods for list display
+    def image_name_display(self, obj):
+        """Display image name or ID if no name"""
+        if obj.image_name:
+            return obj.image_name
+        return f"Image {obj.id}"
+    image_name_display.short_description = 'Image Name'
+    image_name_display.admin_order_field = 'image_name'
+
     def text_preview(self, obj):
         """Display shortened text preview"""
         if len(obj.text) > 30:
@@ -125,6 +172,19 @@ class StyledImageAdmin(admin.ModelAdmin):
             )
         return format_html('<span style="color: #999;">No category</span>')
     category_display.short_description = 'Category'
+
+    def tags_display(self, obj):
+        """Display tags with styling"""
+        tags = obj.tags.all()
+        if tags:
+            tag_html = []
+            for tag in tags:
+                tag_html.append(
+                    f'<span style="background: #f3e5f5; padding: 2px 8px; border-radius: 12px; font-size: 12px; margin: 2px;">{tag.name}</span>'
+                )
+            return format_html(' '.join(tag_html))
+        return format_html('<span style="color: #999;">No tags</span>')
+    tags_display.short_description = 'Tags'
 
     def original_image_preview_list(self, obj):
         """Display small original image preview in list view"""
@@ -241,7 +301,7 @@ class StyledImageAdmin(admin.ModelAdmin):
     list_per_page = 20
     ordering = ['-created_at']
     date_hierarchy = 'created_at'
-    list_display_links = ['id', 'text_preview']
+    list_display_links = ['id', 'image_name_display', 'text_preview']
 
 
 # Register the StyledImage model

@@ -304,6 +304,71 @@
             grid-template-columns: 1fr 1fr;
             gap: 10px;
         }
+
+        /* Tags Input Styles */
+        .tags-input-container {
+            border: 1px solid #ddd;
+            border-radius: 5px;
+            padding: 8px;
+            background: white;
+            min-height: 44px;
+            display: flex;
+            flex-wrap: wrap;
+            gap: 5px;
+            align-items: center;
+        }
+        .tags-input-container:focus-within {
+            border-color: #007bff;
+            box-shadow: 0 0 0 2px rgba(0,123,255,.25);
+        }
+        .tag-item {
+            background: #e3f2fd;
+            padding: 4px 8px;
+            border-radius: 16px;
+            display: flex;
+            align-items: center;
+            gap: 5px;
+            font-size: 14px;
+        }
+        .tag-remove {
+            background: none;
+            border: none;
+            color: #666;
+            cursor: pointer;
+            font-size: 16px;
+            padding: 0;
+            width: 18px;
+            height: 18px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            border-radius: 50%;
+        }
+        .tag-remove:hover {
+            background: #ff4444;
+            color: white;
+        }
+        .tags-input {
+            flex: 1;
+            border: none;
+            outline: none;
+            padding: 5px;
+            min-width: 100px;
+            font-size: 16px;
+        }
+        .tags-input::placeholder {
+            color: #999;
+        }
+        .tags-hint {
+            font-size: 12px;
+            color: #666;
+            margin-top: 5px;
+        }
+
+        /* Existing Categories Styles - Updated */
+        .category-section {
+            margin-bottom: 20px;
+        }
     </style>
 </head>
 <body>
@@ -334,6 +399,14 @@
                 <input type="hidden" id="letter_spacing" name="letter_spacing" value="0">
                 <input type="hidden" id="line_height" name="line_height" value="1.2">
 
+                <!-- NEW: Image Name Field -->
+                <div class="form-group">
+                    <label for="image_name">Image Name:</label>
+                    <input type="text" id="image_name" name="image_name"
+                           placeholder="Enter a name for this image (optional)">
+                    <small style="color: #666; font-size: 12px;">Optional: Give your image a descriptive name</small>
+                </div>
+
                 <div class="form-group">
                     <label for="category">Category:</label>
                     <select id="category" name="category">
@@ -342,6 +415,20 @@
                             <option value="{{ category.id }}">{{ category.name }}</option>
                         {% endfor %}
                     </select>
+                </div>
+
+                <!-- NEW: Tags Input Field -->
+                <div class="form-group">
+                    <label for="tags">Tags:</label>
+                    <div class="tags-input-container" id="tagsContainer">
+                        <!-- Tags will be added here dynamically -->
+                        <input type="text" id="tagsInput" class="tags-input"
+                               placeholder="Type a tag and press comma or enter...">
+                    </div>
+                    <input type="hidden" id="tags" name="tags" value="">
+                    <div class="tags-hint">
+                        Separate tags with commas. Example: landscape, summer, vacation
+                    </div>
                 </div>
 
                 <div class="form-group">
@@ -578,6 +665,12 @@
         const canvasPreview = document.getElementById('canvasPreview');
         const ctx = canvasPreview.getContext('2d');
 
+        // NEW: Tags and Image Name Elements
+        const imageNameInput = document.getElementById('image_name');
+        const tagsContainer = document.getElementById('tagsContainer');
+        const tagsInput = document.getElementById('tagsInput');
+        const tagsHidden = document.getElementById('tags');
+
         // Advanced Controls - ALL inputs
         const toggleAdvancedBtn = document.getElementById('toggleAdvanced');
         const advancedSection = document.getElementById('advancedSection');
@@ -633,6 +726,9 @@
         let filteredFonts = [];
         let isAdvancedOpen = false;
 
+        // Tags management
+        let tags = [];
+
         // Initialize the application
         document.addEventListener('DOMContentLoaded', function() {
             loadGoogleFonts();
@@ -640,7 +736,98 @@
             initializeRangeValues();
             initializeCustomDropdown();
             initializeAdvancedControls();
+            initializeTagsInput();
         });
+
+        // NEW: Initialize tags input functionality
+        function initializeTagsInput() {
+            tagsInput.addEventListener('keydown', function(e) {
+                if (e.key === ',' || e.key === 'Enter') {
+                    e.preventDefault();
+                    addTagFromInput();
+                } else if (e.key === 'Backspace' && this.value === '' && tags.length > 0) {
+                    // Remove last tag when backspace pressed on empty input
+                    removeTag(tags.length - 1);
+                }
+            });
+
+            tagsInput.addEventListener('blur', addTagFromInput);
+
+            // Prevent form submission when pressing enter in tags input
+            tagsInput.addEventListener('keypress', function(e) {
+                if (e.key === 'Enter') {
+                    e.preventDefault();
+                }
+            });
+        }
+
+        // NEW: Add tag from input field
+        function addTagFromInput() {
+            const tagText = tagsInput.value.trim();
+
+            if (tagText && tagText !== '') {
+                const cleanTag = tagText.replace(/,/g, '').toLowerCase();
+
+                if (cleanTag && !tags.includes(cleanTag)) {
+                    tags.push(cleanTag);
+                    updateTagsDisplay();
+                    updateTagsHiddenField();
+                }
+
+                tagsInput.value = '';
+            }
+        }
+
+        // NEW: Remove tag by index
+        function removeTag(index) {
+            tags.splice(index, 1);
+            updateTagsDisplay();
+            updateTagsHiddenField();
+        }
+
+        // NEW: Update tags display in the container
+        function updateTagsDisplay() {
+            // Clear existing tags
+            const tagElements = tagsContainer.querySelectorAll('.tag-item');
+            tagElements.forEach(tag => tag.remove());
+
+            // Add new tags
+            tags.forEach((tag, index) => {
+                const tagElement = document.createElement('div');
+                tagElement.className = 'tag-item';
+                tagElement.innerHTML = `
+                    ${tag}
+                    <button type="button" class="tag-remove" data-index="${index}">&times;</button>
+                `;
+
+                // Insert before the input
+                tagsContainer.insertBefore(tagElement, tagsInput);
+
+                // Add click event to remove button
+                tagElement.querySelector('.tag-remove').addEventListener('click', function() {
+                    const idx = parseInt(this.dataset.index);
+                    removeTag(idx);
+                });
+            });
+
+            // Focus input
+            tagsInput.focus();
+        }
+
+        // NEW: Update hidden tags field
+        function updateTagsHiddenField() {
+            tagsHidden.value = tags.join(',');
+            console.log('Tags updated:', tagsHidden.value);
+        }
+
+        // NEW: Load tags from existing data
+        function loadTags(tagsString) {
+            if (tagsString) {
+                tags = tagsString.split(',').map(tag => tag.trim()).filter(tag => tag !== '');
+                updateTagsDisplay();
+                updateTagsHiddenField();
+            }
+        }
 
         function loadGoogleFonts() {
             fetch(GOOGLE_FONTS_API_URL)
@@ -1229,6 +1416,15 @@
                     if (data.success) {
                         const imageData = data.image_data;
 
+                        // NEW: Load image name and tags
+                        if (imageData.image_name) {
+                            imageNameInput.value = imageData.image_name;
+                        }
+
+                        if (imageData.tags) {
+                            loadTags(imageData.tags);
+                        }
+
                         // Populate all form fields with saved data
                         textInput.value = imageData.text;
                         fontSizeRange.value = imageData.font_size;
@@ -1340,6 +1536,12 @@
             fontFamilyInput.value = selectedFontSpan.textContent;
             textAlignmentInput.value = currentAlignment;
 
+            // NEW: Update image name and tags
+            // Image name is already in the form, no need to update hidden field
+
+            // Update tags hidden field
+            updateTagsHiddenField();
+
             // Advanced fields - CRITICAL: Update these before form submission
             fontWeightInput.value = document.querySelector('.font-weight-btn.active')?.dataset.weight || '600';
 
@@ -1359,6 +1561,8 @@
             lineHeightHidden.value = lineHeightRange.value;
 
             console.log("All hidden fields updated:");
+            console.log("Image Name:", imageNameInput.value);
+            console.log("Tags:", tagsHidden.value);
             console.log("Font Weight:", fontWeightInput.value);
             console.log("Shadow Enabled:", enableShadowHidden.value);
             console.log("Text Rotation:", textRotateHidden.value);
@@ -1427,6 +1631,8 @@
                         <div class="success">
                             <h3>Success! Your final styled image is ready:</h3>
                             <p>Image has been saved to the database with ID: ${data.styled_image_id || 'N/A'}</p>
+                            ${data.image_name ? `<p>Image Name: <strong>${data.image_name}</strong></p>` : ''}
+                            ${data.tags ? `<p>Tags: <strong>${data.tags}</strong></p>` : ''}
                         </div>
                         <img src="${imageUrl}" id="finalStyledImage" alt="Final Styled Image">
                         <br>
@@ -1448,6 +1654,9 @@
                 finalResult.innerHTML = `<div class="error">Error: ${error.message}</div>`;
             });
         }
+
+        // NEW: If you want to edit an existing image, you can call this function
+        // Example: loadImageForEditing(123);
     </script>
 </body>
 </html>

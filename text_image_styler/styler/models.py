@@ -11,7 +11,6 @@ class Category(models.Model):
         null=True,
         help_text="Representative image for this category"
     )
-    # NEW FIELD: Show in landing page
     show_in_landing = models.BooleanField(
         default=False,
         help_text="Show this category in the landing page"
@@ -29,14 +28,42 @@ class Category(models.Model):
         return "✅" if self.show_in_landing else "❌"
 
 
+class Tag(models.Model):
+    """Tag model for images"""
+    name = models.CharField(max_length=50, unique=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['name']
+
+    def __str__(self):
+        return self.name
+
+
 class StyledImage(models.Model):
-    # Category relationship only (removed subcategory)
+    # Basic information
+    image_name = models.CharField(
+        max_length=200,
+        blank=True,
+        null=True,
+        help_text="Custom name for this image"
+    )
+
+    # Category relationship
     category = models.ForeignKey(
         Category,
         on_delete=models.SET_NULL,
         null=True,
         blank=True,
         related_name='styled_images'
+    )
+
+    # Tags relationship (many-to-many)
+    tags = models.ManyToManyField(
+        Tag,
+        blank=True,
+        related_name='styled_images',
+        help_text="Tags for categorizing this image"
     )
 
     # Click tracking fields
@@ -108,11 +135,16 @@ class StyledImage(models.Model):
 
     def __str__(self):
         category_info = f" ({self.category.name})" if self.category else ""
-        return f"Styled Image {self.id} - {self.text[:20]}...{category_info}"
+        name_display = self.image_name if self.image_name else f"Image {self.id}"
+        return f"{name_display} - {self.text[:20]}...{category_info}"
 
     def get_category_display(self):
         """Get formatted category display"""
         return self.category.name if self.category else "Uncategorized"
+
+    def get_tags_display(self):
+        """Get formatted tags display"""
+        return ", ".join([tag.name for tag in self.tags.all()])
 
     def increment_clicks(self):
         """Increment the update clicks counter"""
